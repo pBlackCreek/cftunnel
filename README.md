@@ -296,10 +296,6 @@ Since this is a Bash script, testing involves:
 - **Local Access**: Tunnels only expose what Herd already serves locally
 - **Credentials**: Uses Cloudflare's secure authentication flow
 
-### Reporting Security Issues
-
-Please report security vulnerabilities privately to [your-email@domain.com] rather than using the public issue tracker.
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
