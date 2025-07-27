@@ -59,7 +59,76 @@ init_config() {
     fi
 
     if [ ! -f "$CONFIG_FILE" ]; then
-        echo '{}' > "$CONFIG_FILE"
+        echo '{"domain": null, "tunnels": {}}' > "$CONFIG_FILE"
+    fi
+}
+
+# Set domain
+set_domain() {
+    local domain=$1
+    
+    if [ -z "$domain" ]; then
+        print_error "Please specify a domain: cftunnel set-domain example.com"
+        exit 1
+    fi
+    
+    jq ".domain = \"$domain\"" "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+    print_success "Domain set to: $domain"
+}
+
+# Get domain
+get_domain() {
+    jq -r '.domain // empty' "$CONFIG_FILE"
+}
+
+# Get current directory name (sanitized for domain use)
+get_current_dir_name() {
+    local dir_name=$(basename "$(pwd)")
+    # Convert to lowercase and replace non-alphanumeric characters with hyphens
+    echo "$dir_name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g'
+}
+
+# Generate domain from current directory and base domain
+generate_domain() {
+    local domain=$(get_domain)
+    
+    if [ -z "$domain" ]; then
+        print_error "No domain configured. Set one with: cftunnel set-domain example.com"
+        exit 1
+    fi
+    
+    local subdomain=$(get_current_dir_name)
+    echo "$subdomain.$domain"
+}
+
+# Show current configuration
+show_config() {
+    local domain=$(get_domain)
+    local current_dir=$(get_current_dir_name)
+    
+    echo "Current configuration:"
+    echo "  Domain: ${domain:-"(not set)"}"
+    echo "  Current directory: $(pwd)"
+    echo "  Directory name: $current_dir"
+    
+    if [ -n "$domain" ]; then
+        echo "  Generated domain: $current_dir.$domain"
+    fi
+    
+    echo ""
+    echo "Configured tunnels:"
+    if [ -f "$CONFIG_FILE" ]; then
+        local tunnels=$(jq -r '.tunnels | keys[]' "$CONFIG_FILE" 2>/dev/null)
+        if [ -n "$tunnels" ]; then
+            echo "$tunnels" | while read -r domain; do
+                local tunnel_id=$(jq -r ".tunnels[\"$domain\"].id" "$CONFIG_FILE")
+                echo "  $domain -> $tunnel_id"
+            done
+        else
+            echo "  (no tunnels configured)"
+        fi
+    else
+        echo "  (no tunnels configured)"
     fi
 }
 
@@ -274,9 +343,11 @@ main() {
             init_config
 
             local domain=${2:-}
+            
+            # If no domain provided, try to generate one from current directory and domain
             if [ -z "$domain" ]; then
-                print_error "Please specify a domain: cftunnel share yourdomain.com"
-                exit 1
+                domain=$(generate_domain)
+                print_info "Using generated domain: $domain"
             fi
 
             # Ensure cloudflared is logged in
@@ -306,6 +377,16 @@ main() {
 
             # Start tunnel
             start_tunnel "$domain" "$tunnel_id"
+            ;;
+
+        set-domain)
+            init_config
+            set_domain "$2"
+            ;;
+
+        config)
+            init_config
+            show_config
             ;;
 
         stop)
@@ -363,19 +444,30 @@ main() {
 cftunnel - Cloudflare Tunnel automation for Laravel Herd
 
 Usage:
-  cftunnel share <domain> [--secure]    Share your local site via Cloudflare tunnel
-  cftunnel list                        List all configured tunnels
-  cftunnel remove <domain>             Remove tunnel for a domain
-  cftunnel cleanup <domain>            Clean up corrupted config for a domain
-  cftunnel install                    Install this script to /usr/local/bin
-  cftunnel help                        Show this help message
+  cftunnel share [domain] [--secure]     Share your local site via Cloudflare tunnel
+  cftunnel set-domain <domain>           Set the domain for automatic subdomain generation
+  cftunnel config                        Show current configuration
+  cftunnel list                          List all configured tunnels
+  cftunnel remove <domain>               Remove tunnel for a domain
+  cftunnel cleanup <domain>              Clean up corrupted config for a domain
+  cftunnel install                       Install this script to /usr/local/bin
+  cftunnel help                          Show this help message
 
 Examples:
-  cftunnel share myapp.com            Share current directory at https://myapp.com
-  cftunnel share myapp.com --secure   Share with HTTPS locally (Herd secure)
-  cftunnel list                       Show all configured tunnels
-  cftunnel remove myapp.com           Remove tunnel configuration
-  cftunnel cleanup myapp.com          Clean up corrupted configuration
+  cftunnel set-domain example.com        Set domain to example.com
+  cftunnel share                         Share current directory at [directory-name].example.com
+  cftunnel share myapp.com               Share current directory at https://myapp.com
+  cftunnel share myapp.com --secure      Share with HTTPS locally (Herd secure)
+  cftunnel config                        Show current configuration and generated domain
+  cftunnel list                          Show all configured tunnels
+  cftunnel remove myapp.com              Remove tunnel configuration
+  cftunnel cleanup myapp.com             Clean up corrupted configuration
+
+Automatic subdomain generation:
+  1. Set a domain: cftunnel set-domain example.com
+  2. Navigate to your project directory: cd /path/to/my-laravel-app
+  3. Run: cftunnel share
+  4. Your app will be available at: https://my-laravel-app.example.com
 
 Requirements:
   - Laravel Herd
@@ -385,7 +477,8 @@ Requirements:
 First time setup:
   1. Install requirements
   2. Run 'cloudflared login' to authenticate
-  3. Run 'cftunnel share yourdomain.com' from your project directory
+  3. Set domain: 'cftunnel set-domain yourdomain.com'
+  4. Run 'cftunnel share' from your project directory
 
 Note: Make sure you own the domain and have access to its DNS settings in Cloudflare.
 EOF
